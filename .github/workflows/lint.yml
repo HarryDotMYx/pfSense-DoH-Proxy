@@ -10,7 +10,7 @@ jobs:
     name: PHP syntax (php -l)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Lint all PHP files
         run: |
           set -e
@@ -21,7 +21,7 @@ jobs:
     name: Shell syntax + ShellCheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: POSIX sh syntax check
         run: |
           set -e
