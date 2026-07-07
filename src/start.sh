@@ -2,7 +2,6 @@
 PID_FILE="/var/run/doh-proxy.pid"
 APP_DIR="/root/doh-proxy"
 LOG_FILE="/var/log/doh-proxy.log"
-SERVICE_BIN="/usr/sbin/service"
 
 # In DoT mode Unbound talks TLS directly - the daemon is not needed.
 MODE=$(/usr/local/bin/php -r '$c = @include "/root/doh-proxy/config.php"; echo is_array($c) ? ($c["mode"] ?? "doh") : "doh";' 2>/dev/null)
@@ -28,8 +27,11 @@ for _ in $(jot 20 2>/dev/null || seq 1 20); do
 done
 
 if [ "$ready" -eq 1 ]; then
-    echo "[$(date -Iseconds)] DoH proxy ready, restarting unbound." >> "$LOG_FILE"
-    "$SERVICE_BIN" unbound onerestart >/dev/null 2>&1 || true
+    echo "[$(date -Iseconds)] DoH proxy ready, reconfiguring unbound." >> "$LOG_FILE"
+    # NOTE: never use "service unbound onerestart" here - on pfSense that
+    # invokes the FreeBSD pkg rc script and starts a SECOND, unmanaged
+    # unbound on 127.0.0.1:53. Use pfSense's own configure function.
+    /usr/local/bin/php -r 'require_once("config.inc"); require_once("services.inc"); services_unbound_configure();' >/dev/null 2>&1 || true
 else
     echo "[$(date -Iseconds)] DoH proxy did not become ready during boot wait window." >> "$LOG_FILE"
 fi

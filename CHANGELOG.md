@@ -19,6 +19,13 @@ DoH **and** DoT: the page now manages both encrypted-DNS modes.
 - `set_url.php` accepts `tls://host[:port]` to switch to DoT from the CLI
 - Installer `--url=` accepts both `https://…` and `tls://…` upstreams
 
+### Fixed
+
+- **`start.sh` no longer runs `service unbound onerestart`** — on pfSense
+  that invokes the FreeBSD pkg rc script and silently starts a second,
+  unmanaged unbound on `127.0.0.1:53`. It now calls pfSense's own
+  `services_unbound_configure()` instead.
+
 ### Changed
 
 - `start.sh` is a no-op in DoT mode, so the boot hook works for both modes

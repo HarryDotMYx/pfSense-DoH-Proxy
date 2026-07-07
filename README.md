@@ -109,7 +109,7 @@ Removes the service, GUI page, menu entry, boot hook and (if the installer added
 
 ## Notes & caveats
 
-- The proxy handles queries sequentially (single PHP process). Unbound caches aggressively in front of it, so this is fine for home/small-office use — it is not built for high-QPS environments.
+- **The DoH proxy handles queries sequentially** (single PHP process, one HTTPS round-trip at a time). Unbound caches in front of it, but on a busy network with many uncached lookups the proxy can saturate and clients will see SERVFAILs. **If that happens, switch to DoT mode** — same encryption, handled natively (and multi-threaded) by Unbound. DoH mode is best for small networks or when only HTTPS egress is allowed.
 - The proxy binds to `127.0.0.1` only; nothing is exposed to the LAN or WAN.
 - If you change `listen_port` in the config, update the readiness check in `start.sh` too.
 - pfSense upgrades may remove `/usr/local/www/doh_proxy_gui.php`; just re-run the installer afterwards. Your config in `/root/doh-proxy` survives.
