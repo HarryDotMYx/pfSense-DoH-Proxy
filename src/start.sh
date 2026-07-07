@@ -4,6 +4,12 @@ APP_DIR="/root/doh-proxy"
 LOG_FILE="/var/log/doh-proxy.log"
 SERVICE_BIN="/usr/sbin/service"
 
+# In DoT mode Unbound talks TLS directly - the daemon is not needed.
+MODE=$(/usr/local/bin/php -r '$c = @include "/root/doh-proxy/config.php"; echo is_array($c) ? ($c["mode"] ?? "doh") : "doh";' 2>/dev/null)
+if [ "$MODE" = "dot" ]; then
+    exit 0
+fi
+
 if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     exit 0
 fi

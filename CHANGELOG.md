@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.1.0 — 2026-07-07
+
+DoH **and** DoT: the page now manages both encrypted-DNS modes.
+
+### Added
+
+- **DoT mode** — Unbound-native `forward-tls-upstream` (no daemon needed):
+  - mode selector in the webGUI (*DoH via proxy* / *DoT native*)
+  - DoT settings: hostname (cert is verified against it), IPs (auto-resolve
+    A + AAAA when left empty) and port
+  - real DoT probe before saving: verified TLS handshake on port 853 plus an
+    actual DNS query over the connection (`dot_check.php`, `dot_test.php`)
+- **Marker-managed Unbound block** — the GUI and installer now write the
+  `# BEGIN DOH-PROXY … # END DOH-PROXY` block in Unbound custom options
+  directly (replace-in-place when it exists, append when absent) and still
+  refuse to touch any foreign `forward-zone`
+- `set_url.php` accepts `tls://host[:port]` to switch to DoT from the CLI
+- Installer `--url=` accepts both `https://…` and `tls://…` upstreams
+
+### Changed
+
+- `start.sh` is a no-op in DoT mode, so the boot hook works for both modes
+- Saving in DoT mode stops the daemon (not needed); saving in DoH mode
+  starts it
+- "Save & Restart" button renamed to "Save & Apply" (it now also updates
+  Unbound); "Restart Service" restarts the daemon (DoH) or Unbound (DoT)
+
 ## v1.0.0 — 2026-07-07
 
 First stable release.

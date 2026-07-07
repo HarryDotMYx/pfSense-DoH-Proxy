@@ -1,12 +1,17 @@
 <?php
 /*
- * doh_proxy_gui.php
+ * doh_proxy_gui.php (v1.1.0)
  *
- * Web GUI for the custom DoH proxy in /root/doh-proxy.
- * Edits config.php, restarts the service and shows status/logs.
+ * Web GUI for encrypted DNS upstreams on pfSense:
+ *   - DoH mode: Unbound -> local proxy (/root/doh-proxy) -> https://.../dns-query
+ *   - DoT mode: Unbound native forward-tls-upstream, no daemon needed
+ *
+ * Manages a marker-delimited block in Unbound custom options and refuses
+ * to touch any forward-zone it does not own.
  */
 
 require_once("guiconfig.inc");
+require_once("services.inc");
 
 define('DOHP_DIR', '/root/doh-proxy');
 define('DOHP_CONF', DOHP_DIR . '/config.php');
@@ -14,10 +19,18 @@ define('DOHP_PIDFILE', '/var/run/doh-proxy.pid');
 // example.com A query, RFC 8484 sample (base64url)
 define('DOHP_TEST_QUERY', 'q80BAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE');
 
+if (file_exists(DOHP_DIR . '/dot_check.php')) {
+	require_once(DOHP_DIR . '/dot_check.php');
+}
+
 function dohp_read_config() {
 	$defaults = array(
+		'mode' => 'doh',
 		'doh_url' => '',
 		'doh_resolve' => '',
+		'dot_host' => '',
+		'dot_ips' => array(),
+		'dot_port' => 853,
 		'listen_host' => '127.0.0.1',
 		'listen_port' => 5053,
 		'timeout_seconds' => 10,
@@ -34,6 +47,13 @@ function dohp_read_config() {
 	return $defaults;
 }
 
+function dohp_write_config($new) {
+	$ts = date('Ymd-His');
+	safe_mkdir(DOHP_DIR . "/backup/{$ts}");
+	@copy(DOHP_CONF, DOHP_DIR . "/backup/{$ts}/config.php");
+	file_put_contents(DOHP_CONF, "<?php\nreturn " . var_export($new, true) . ";\n");
+}
+
 function dohp_running() {
 	if (file_exists(DOHP_PIDFILE) && isvalidpid(DOHP_PIDFILE)) {
 		return (int) trim(file_get_contents(DOHP_PIDFILE));
@@ -46,7 +66,7 @@ function dohp_url_host($url) {
 	return is_string($host) ? $host : '';
 }
 
-function dohp_test_upstream($url, $pin_ip) {
+function dohp_test_doh($url, $pin_ip) {
 	$host = dohp_url_host($url);
 	$cmd = '/usr/local/bin/curl -s -o /dev/null -w %{http_code} --max-time 8 ' .
 	    '--resolve ' . escapeshellarg($host . ':443:' . $pin_ip) . ' ' .
@@ -54,21 +74,92 @@ function dohp_test_upstream($url, $pin_ip) {
 	return trim((string) shell_exec($cmd . ' 2>/dev/null'));
 }
 
-function dohp_restart() {
+function dohp_proxy_start() {
 	mwexec(DOHP_DIR . '/stop.sh');
 	sleep(1);
-	// start.sh waits for the listen port, then restarts unbound
 	mwexec(DOHP_DIR . '/start.sh');
 }
 
+function dohp_proxy_stop() {
+	mwexec(DOHP_DIR . '/stop.sh');
+}
+
+/* ---- Unbound custom-options management (marker-delimited block) ---------- */
+
+function dohp_unbound_read() {
+	$b64 = config_get_path('unbound/custom_options', '');
+	$dec = base64_decode($b64, true);
+	return ($dec !== false && base64_encode($dec) === $b64) ? $dec : $b64;
+}
+
+function dohp_unbound_block($mode, $conf) {
+	if ($mode === 'dot') {
+		$port = (int) ($conf['dot_port'] ?? 853);
+		$host = $conf['dot_host'];
+		$lines = array(
+			'# BEGIN DOH-PROXY',
+			'forward-zone:',
+			'  name: "."',
+			'  forward-tls-upstream: yes',
+		);
+		foreach ((array) $conf['dot_ips'] as $ip) {
+			$lines[] = "  forward-addr: {$ip}@{$port}#{$host}";
+		}
+		$lines[] = '# END DOH-PROXY';
+	} else {
+		$addr = ($conf['listen_host'] ?? '127.0.0.1') . '@' . ($conf['listen_port'] ?? 5053);
+		$lines = array(
+			'# BEGIN DOH-PROXY',
+			'server:',
+			'  do-not-query-localhost: no',
+			'forward-zone:',
+			'  name: "."',
+			"  forward-addr: {$addr}",
+			'# END DOH-PROXY',
+		);
+	}
+	return implode("\n", $lines);
+}
+
+/* Returns true when applied; false when refused (foreign forward-zone). */
+function dohp_unbound_apply($mode, $conf, &$msg) {
+	$txt = dohp_unbound_read();
+	$block = dohp_unbound_block($mode, $conf);
+
+	if (strpos($txt, '# BEGIN DOH-PROXY') !== false) {
+		$new = preg_replace('/# BEGIN DOH-PROXY.*?# END DOH-PROXY/s', $block, $txt, 1);
+	} elseif (strpos($txt, 'forward-zone') !== false) {
+		$msg = gettext('Unbound custom options already contain a forward-zone that is not managed by this page - Unbound was left untouched. Remove your manual block if you want this page to manage it.');
+		return false;
+	} else {
+		$new = (trim($txt) === '') ? $block : rtrim($txt) . "\n" . $block;
+	}
+
+	config_set_path('unbound/custom_options', base64_encode($new));
+	write_config("DoH Proxy GUI: set Unbound upstream ({$mode} mode)");
+	services_unbound_configure();
+	$msg = sprintf(gettext('Unbound updated and reloaded (%s mode).'), strtoupper($mode));
+	return true;
+}
+
+function dohp_unbound_managed() {
+	return strpos(dohp_unbound_read(), '# BEGIN DOH-PROXY') !== false;
+}
+
+/* ---- page logic ----------------------------------------------------------- */
+
 $conf = dohp_read_config();
 
-$pconfig = array();
-$pconfig['doh_url'] = $conf['doh_url'];
-$pconfig['pin_ip'] = '';
-$pconfig['timeout'] = $conf['timeout_seconds'];
-$pconfig['debug'] = !empty($conf['debug']);
-
+$pconfig = array(
+	'mode' => in_array($conf['mode'], array('doh', 'dot'), true) ? $conf['mode'] : 'doh',
+	'doh_url' => $conf['doh_url'],
+	'pin_ip' => '',
+	'timeout' => $conf['timeout_seconds'],
+	'debug' => !empty($conf['debug']),
+	'dot_host' => $conf['dot_host'],
+	'dot_ips' => implode(', ', (array) $conf['dot_ips']),
+	'dot_port' => $conf['dot_port'],
+);
 if (!empty($conf['doh_resolve'])) {
 	$parts = explode(':', $conf['doh_resolve']);
 	$pconfig['pin_ip'] = end($parts);
@@ -77,77 +168,166 @@ if (!empty($conf['doh_resolve'])) {
 $input_errors = array();
 $savemsg = '';
 $testmsg = '';
+$unbound_notice = '';
 
 if ($_POST) {
 	if (isset($_POST['restart'])) {
-		dohp_restart();
-		$savemsg = gettext("Service restarted.");
+		if ($conf['mode'] === 'dot') {
+			services_unbound_configure();
+			$savemsg = gettext("Unbound restarted.");
+		} else {
+			dohp_proxy_start();
+			$savemsg = gettext("Service restarted.");
+		}
 	} elseif (isset($_POST['save']) || isset($_POST['testbtn'])) {
+		$mode = ($_POST['mode'] ?? 'doh') === 'dot' ? 'dot' : 'doh';
+		$pconfig['mode'] = $mode;
 		$pconfig['doh_url'] = trim($_POST['doh_url'] ?? '');
 		$pconfig['pin_ip'] = trim($_POST['pin_ip'] ?? '');
 		$pconfig['timeout'] = trim($_POST['timeout'] ?? '10');
 		$pconfig['debug'] = isset($_POST['debug']);
+		$pconfig['dot_host'] = trim($_POST['dot_host'] ?? '');
+		$pconfig['dot_ips'] = trim($_POST['dot_ips'] ?? '');
+		$pconfig['dot_port'] = trim($_POST['dot_port'] ?? '853');
 		$skiptest = isset($_POST['skiptest']);
 
-		$host = dohp_url_host($pconfig['doh_url']);
-		if (empty($pconfig['doh_url']) ||
-		    parse_url($pconfig['doh_url'], PHP_URL_SCHEME) !== 'https' ||
-		    empty($host)) {
-			$input_errors[] = gettext("DoH URL must be a valid https:// URL, e.g. https://dns.example.com/dns-query");
-		}
-		if (!empty($pconfig['pin_ip']) && !is_ipaddr($pconfig['pin_ip'])) {
-			$input_errors[] = gettext("Pinned IP must be a valid IP address.");
-		}
-		if (!is_numericint($pconfig['timeout']) ||
-		    $pconfig['timeout'] < 1 || $pconfig['timeout'] > 60) {
-			$input_errors[] = gettext("Timeout must be between 1 and 60 seconds.");
-		}
+		$dot_ips = array();
 
-		// Auto-resolve the pin IP when left empty
-		if (!$input_errors && empty($pconfig['pin_ip'])) {
-			$ip = gethostbyname($host);
-			if ($ip == $host || !is_ipaddr($ip)) {
-				$input_errors[] = sprintf(gettext('Could not resolve "%s" - enter the pinned IP manually.'), $host);
-			} else {
-				$pconfig['pin_ip'] = $ip;
+		if ($mode === 'doh') {
+			$host = dohp_url_host($pconfig['doh_url']);
+			if (empty($pconfig['doh_url']) ||
+			    parse_url($pconfig['doh_url'], PHP_URL_SCHEME) !== 'https' ||
+			    empty($host)) {
+				$input_errors[] = gettext("DoH URL must be a valid https:// URL, e.g. https://dns.example.com/dns-query");
 			}
-		}
-
-		if (!$input_errors && !$skiptest) {
-			$code = dohp_test_upstream($pconfig['doh_url'], $pconfig['pin_ip']);
-			if ($code === '200') {
-				$testmsg = sprintf(gettext('Upstream test OK (HTTP %1$s from %2$s via %3$s).'),
-				    $code, $host, $pconfig['pin_ip']);
-			} else {
-				$msg = sprintf(gettext('Upstream test FAILED (HTTP "%1$s" from %2$s via %3$s).'),
-				    $code, $host, $pconfig['pin_ip']);
-				if (isset($_POST['save'])) {
-					$msg .= ' ' . gettext('Nothing was saved. Check "Skip upstream test" to save anyway.');
+			if (!empty($pconfig['pin_ip']) && !is_ipaddr($pconfig['pin_ip'])) {
+				$input_errors[] = gettext("Pinned IP must be a valid IP address.");
+			}
+			if (!is_numericint($pconfig['timeout']) ||
+			    $pconfig['timeout'] < 1 || $pconfig['timeout'] > 60) {
+				$input_errors[] = gettext("Timeout must be between 1 and 60 seconds.");
+			}
+			if (!$input_errors && empty($pconfig['pin_ip'])) {
+				$ip = gethostbyname($host);
+				if ($ip == $host || !is_ipaddr($ip)) {
+					$input_errors[] = sprintf(gettext('Could not resolve "%s" - enter the pinned IP manually.'), $host);
+				} else {
+					$pconfig['pin_ip'] = $ip;
 				}
-				$input_errors[] = $msg;
+			}
+			if (!$input_errors && !$skiptest) {
+				$code = dohp_test_doh($pconfig['doh_url'], $pconfig['pin_ip']);
+				if ($code === '200') {
+					$testmsg = sprintf(gettext('DoH upstream test OK (HTTP %1$s from %2$s via %3$s).'),
+					    $code, $host, $pconfig['pin_ip']);
+				} else {
+					$msg = sprintf(gettext('DoH upstream test FAILED (HTTP "%1$s" from %2$s via %3$s).'),
+					    $code, $host, $pconfig['pin_ip']);
+					if (isset($_POST['save'])) {
+						$msg .= ' ' . gettext('Nothing was saved. Check "Skip upstream test" to save anyway.');
+					}
+					$input_errors[] = $msg;
+				}
+			}
+		} else { /* dot */
+			if (empty($pconfig['dot_host']) || !is_hostname($pconfig['dot_host'])) {
+				$input_errors[] = gettext("DoT hostname must be a valid hostname, e.g. dns.example.com");
+			}
+			if (!is_port($pconfig['dot_port'])) {
+				$input_errors[] = gettext("DoT port must be a valid port (default 853).");
+			}
+			if ($pconfig['dot_ips'] !== '') {
+				foreach (explode(',', $pconfig['dot_ips']) as $ip) {
+					$ip = trim($ip);
+					if ($ip === '') {
+						continue;
+					}
+					if (!is_ipaddr($ip)) {
+						$input_errors[] = sprintf(gettext('"%s" is not a valid IP address.'), $ip);
+					} else {
+						$dot_ips[] = $ip;
+					}
+				}
+			}
+			if (!$input_errors && empty($dot_ips)) {
+				foreach ((array) @dns_get_record($pconfig['dot_host'], DNS_A) as $r) {
+					if (!empty($r['ip'])) {
+						$dot_ips[] = $r['ip'];
+					}
+				}
+				foreach ((array) @dns_get_record($pconfig['dot_host'], DNS_AAAA) as $r) {
+					if (!empty($r['ipv6'])) {
+						$dot_ips[] = $r['ipv6'];
+					}
+				}
+				if (empty($dot_ips)) {
+					$input_errors[] = sprintf(gettext('Could not resolve "%s" - enter the IP(s) manually.'), $pconfig['dot_host']);
+				} else {
+					$pconfig['dot_ips'] = implode(', ', $dot_ips);
+				}
+			}
+			if (!$input_errors && !$skiptest) {
+				if (!function_exists('dohp_dot_probe')) {
+					$input_errors[] = gettext('dot_check.php is missing from /root/doh-proxy - re-run the installer.');
+				} else {
+					$pass = array();
+					$fail = array();
+					foreach ($dot_ips as $ip) {
+						$detail = '';
+						if (dohp_dot_probe($pconfig['dot_host'], $ip, (int) $pconfig['dot_port'], $detail)) {
+							$pass[] = $detail;
+						} else {
+							$fail[] = $detail;
+						}
+					}
+					if (empty($pass)) {
+						$msg = gettext('DoT upstream test FAILED:') . ' ' . implode('; ', $fail);
+						if (isset($_POST['save'])) {
+							$msg .= ' ' . gettext('Nothing was saved. Check "Skip upstream test" to save anyway.');
+						}
+						$input_errors[] = $msg;
+					} else {
+						$testmsg = gettext('DoT upstream test OK:') . ' ' . implode('; ', $pass);
+						if (!empty($fail)) {
+							$testmsg .= ' | ' . gettext('Failed:') . ' ' . implode('; ', $fail);
+						}
+					}
+				}
 			}
 		}
 
 		if (!$input_errors && isset($_POST['save'])) {
-			// Backup, then write the new config
-			$ts = date('Ymd-His');
-			safe_mkdir(DOHP_DIR . "/backup/{$ts}");
-			@copy(DOHP_CONF, DOHP_DIR . "/backup/{$ts}/config.php");
-
 			$new = $conf;
-			$new['doh_url'] = $pconfig['doh_url'];
-			$new['doh_resolve'] = $host . ':443:' . $pconfig['pin_ip'];
-			$new['timeout_seconds'] = (int) $pconfig['timeout'];
-			$new['debug'] = (bool) $pconfig['debug'];
+			$new['mode'] = $mode;
+			if ($mode === 'doh') {
+				$host = dohp_url_host($pconfig['doh_url']);
+				$new['doh_url'] = $pconfig['doh_url'];
+				$new['doh_resolve'] = $host . ':443:' . $pconfig['pin_ip'];
+				$new['timeout_seconds'] = (int) $pconfig['timeout'];
+				$new['debug'] = (bool) $pconfig['debug'];
+			} else {
+				$new['dot_host'] = $pconfig['dot_host'];
+				$new['dot_ips'] = $dot_ips;
+				$new['dot_port'] = (int) $pconfig['dot_port'];
+			}
+			dohp_write_config($new);
+			$conf = dohp_read_config();
 
-			file_put_contents(DOHP_CONF, "<?php\nreturn " . var_export($new, true) . ";\n");
-			dohp_restart();
-			$savemsg = gettext("Configuration saved and service restarted.");
+			$unb = '';
+			dohp_unbound_apply($mode, $conf, $unb);
+			$unbound_notice = $unb;
+
+			if ($mode === 'doh') {
+				dohp_proxy_start();
+			} else {
+				dohp_proxy_stop();
+			}
+
+			$savemsg = gettext("Configuration saved.");
 			if ($testmsg) {
 				$savemsg .= ' ' . $testmsg;
 				$testmsg = '';
 			}
-			$conf = dohp_read_config();
 		}
 	}
 }
@@ -163,33 +343,61 @@ if ($savemsg) {
 } elseif ($testmsg) {
 	print_info_box($testmsg, 'success');
 }
+if ($unbound_notice) {
+	print_info_box($unbound_notice, dohp_unbound_managed() ? 'success' : 'warning', false);
+}
 
-$pid = dohp_running();
-if ($pid) {
-	print_info_box(sprintf(gettext('DoH proxy is running (PID %1$d) on %2$s:%3$d — upstream: %4$s'),
-	    $pid, $conf['listen_host'], $conf['listen_port'], $conf['doh_url']), 'success', false);
+/* status box */
+if ($conf['mode'] === 'dot') {
+	$managed = dohp_unbound_managed();
+	$running = function_exists('is_service_running') ? is_service_running('unbound') : true;
+	$cls = ($managed && $running) ? 'success' : 'warning';
+	print_info_box(sprintf(gettext('Mode: DoT (native Unbound) — upstream: %1$s:%2$d [%3$s] — Unbound: %4$s, custom options %5$s'),
+	    $conf['dot_host'], $conf['dot_port'], implode(', ', (array) $conf['dot_ips']),
+	    $running ? gettext('running') : gettext('NOT running'),
+	    $managed ? gettext('managed by this page') : gettext('NOT managed (manual forward-zone present)')), $cls, false);
+	$pid = dohp_running();
+	if ($pid) {
+		print_info_box(sprintf(gettext('Note: the DoH proxy daemon is still running (PID %d) but is not needed in DoT mode. It will stop on the next Save.'), $pid), 'info', false);
+	}
 } else {
-	print_info_box(gettext('DoH proxy is NOT running.'), 'danger', false);
+	$pid = dohp_running();
+	if ($pid) {
+		print_info_box(sprintf(gettext('Mode: DoH — proxy running (PID %1$d) on %2$s:%3$d — upstream: %4$s'),
+		    $pid, $conf['listen_host'], $conf['listen_port'], $conf['doh_url']), 'success', false);
+	} else {
+		print_info_box(gettext('Mode: DoH — proxy is NOT running.'), 'danger', false);
+	}
 }
 
 $form = new Form(false);
 
-$section = new Form_Section('DoH Upstream');
+$section = new Form_Section('Upstream Mode');
+$section->addInput(new Form_Select(
+	'mode',
+	'*Mode',
+	$pconfig['mode'],
+	array(
+		'doh' => gettext('DNS over HTTPS (DoH) — via local proxy daemon'),
+		'dot' => gettext('DNS over TLS (DoT) — native Unbound, no daemon'),
+	)
+))->setHelp('Both modes verify the server certificate and are tested with a real DNS query before saving.');
+$form->add($section);
 
+$section = new Form_Section('DoH Settings');
+$section->addClass('dohp-doh');
 $section->addInput(new Form_Input(
 	'doh_url',
-	'*DoH URL',
+	'DoH URL',
 	'text',
 	$pconfig['doh_url']
 ))->setHelp('Full DoH endpoint URL, e.g. %s', '<code>https://dns.example.com/dns-query</code>');
-
 $section->addInput(new Form_Input(
 	'pin_ip',
 	'Pinned IP',
 	'text',
 	$pconfig['pin_ip']
-))->setHelp('IP address used to reach the DoH server without depending on DNS (bootstrap). Leave empty to auto-resolve on save.');
-
+))->setHelp('IP used to reach the DoH server without depending on DNS (bootstrap). Leave empty to auto-resolve on save.');
 $section->addInput(new Form_Input(
 	'timeout',
 	'Timeout',
@@ -197,26 +405,49 @@ $section->addInput(new Form_Input(
 	$pconfig['timeout'],
 	['min' => 1, 'max' => 60]
 ))->setHelp('Upstream query timeout in seconds.');
-
 $section->addInput(new Form_Checkbox(
 	'debug',
 	'Debug',
 	'Enable debug logging',
 	$pconfig['debug']
 ));
+$form->add($section);
 
+$section = new Form_Section('DoT Settings');
+$section->addClass('dohp-dot');
+$section->addInput(new Form_Input(
+	'dot_host',
+	'DoT hostname',
+	'text',
+	$pconfig['dot_host']
+))->setHelp('TLS certificate is verified against this name, e.g. %s', '<code>dns.example.com</code>');
+$section->addInput(new Form_Input(
+	'dot_ips',
+	'Server IP(s)',
+	'text',
+	$pconfig['dot_ips']
+))->setHelp('Comma-separated IPv4/IPv6 addresses. Leave empty to auto-resolve A + AAAA on save.');
+$section->addInput(new Form_Input(
+	'dot_port',
+	'Port',
+	'number',
+	$pconfig['dot_port'],
+	['min' => 1, 'max' => 65535]
+))->setHelp('Default 853.');
+$form->add($section);
+
+$section = new Form_Section('Safety');
 $section->addInput(new Form_Checkbox(
 	'skiptest',
 	'Skip upstream test',
 	'Save even if the upstream test fails',
 	false
-))->setHelp('By default the upstream is tested with a real DoH query before saving, so a typo cannot take down DNS for the whole network. Only skip this if the upstream is temporarily unreachable and you still want to save.');
-
+))->setHelp('By default the upstream is tested with a real DNS query before saving, so a typo cannot take down DNS for the whole network. Only skip this if the upstream is temporarily unreachable and you still want to save.');
 $form->add($section);
 
 $form->addGlobal(new Form_Button(
 	'save',
-	'Save & Restart',
+	'Save & Apply',
 	null,
 	'fa-solid fa-floppy-disk'
 ))->addClass('btn-primary');
@@ -251,5 +482,19 @@ if (file_exists($logfile)) {
 		<pre style="max-height: 300px; overflow-y: auto;"><?=htmlspecialchars($logtail !== '' ? $logtail : gettext('(log is empty)'))?></pre>
 	</div>
 </div>
+
+<script type="text/javascript">
+//<![CDATA[
+events.push(function() {
+	function dohp_toggle_mode() {
+		var mode = $('#mode').val();
+		$('.dohp-doh').toggle(mode === 'doh');
+		$('.dohp-dot').toggle(mode === 'dot');
+	}
+	$('#mode').on('change', dohp_toggle_mode);
+	dohp_toggle_mode();
+});
+//]]>
+</script>
 <?php
 include("foot.inc");

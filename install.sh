@@ -1,7 +1,8 @@
 #!/bin/sh
 #
-# pfSense DoH Proxy - installer
-# Run this ON the pfSense box as root:  sh install.sh [-y] [--url=https://host/dns-query]
+# pfSense DoH Proxy - installer (DoH + DoT)
+# Run this ON the pfSense box as root:
+#   sh install.sh [-y] [--url=https://host/dns-query | --url=tls://host]
 #
 set -u
 
@@ -11,18 +12,19 @@ PHP_BIN="/usr/local/bin/php"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)/src"
 
 AUTO_YES=0
-DOH_URL=""
+UPSTREAM=""
 
 usage() {
-    echo "Usage: sh install.sh [-y] [--url=https://host/dns-query]"
-    echo "  -y          answer yes to all prompts"
-    echo "  --url=URL   DoH endpoint to configure (skips the prompt)"
+    echo "Usage: sh install.sh [-y] [--url=UPSTREAM]"
+    echo "  -y              answer yes to all prompts"
+    echo "  --url=UPSTREAM  https://host/dns-query (DoH mode)"
+    echo "                  tls://host[:port]      (DoT mode, native Unbound)"
 }
 
 for arg in "$@"; do
     case "$arg" in
         -y|--yes) AUTO_YES=1 ;;
-        --url=*)  DOH_URL="${arg#--url=}" ;;
+        --url=*)  UPSTREAM="${arg#--url=}" ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $arg" >&2; usage; exit 1 ;;
     esac
@@ -59,6 +61,8 @@ echo "==> Installing DoH proxy to $APP_DIR"
 mkdir -p "$APP_DIR/backup"
 cp "$SRC_DIR/doh_proxy.php" "$APP_DIR/doh_proxy.php"
 cp "$SRC_DIR/set_url.php"   "$APP_DIR/set_url.php"
+cp "$SRC_DIR/dot_check.php" "$APP_DIR/dot_check.php"
+cp "$SRC_DIR/dot_test.php"  "$APP_DIR/dot_test.php"
 cp "$SRC_DIR/start.sh"      "$APP_DIR/start.sh"
 cp "$SRC_DIR/stop.sh"       "$APP_DIR/stop.sh"
 chmod 755 "$APP_DIR/start.sh" "$APP_DIR/stop.sh"
@@ -70,34 +74,49 @@ else
     echo "==> Keeping existing config: $APP_DIR/config.php"
 fi
 
-# --- DoH endpoint ---------------------------------------------------------------
-CURRENT_URL=$("$PHP_BIN" -r '$c = require $argv[1]; echo (string)($c["doh_url"] ?? "");' "$APP_DIR/config.php")
+# --- upstream -------------------------------------------------------------------
+current_upstream() {
+    "$PHP_BIN" -r '$c = require $argv[1]; $m = $c["mode"] ?? "doh"; echo $m === "dot" ? (!empty($c["dot_host"]) ? "tls://" . $c["dot_host"] : "") : (string)($c["doh_url"] ?? "");' "$APP_DIR/config.php"
+}
 
-if [ -z "$CURRENT_URL" ] && [ -z "$DOH_URL" ] && [ "$AUTO_YES" -eq 0 ]; then
-    printf 'Enter your DoH endpoint URL (e.g. https://dns.example.com/dns-query),\nor press Enter to configure it later in the GUI: '
-    read -r DOH_URL
+CURRENT=$(current_upstream)
+
+if [ -z "$CURRENT" ] && [ -z "$UPSTREAM" ] && [ "$AUTO_YES" -eq 0 ]; then
+    printf 'Enter your encrypted-DNS upstream:\n'
+    printf '  DoH:  https://dns.example.com/dns-query\n'
+    printf '  DoT:  tls://dns.example.com\n'
+    printf 'or press Enter to configure it later in the GUI: '
+    read -r UPSTREAM
 fi
 
-if [ -n "$DOH_URL" ]; then
-    "$PHP_BIN" "$APP_DIR/set_url.php" "$DOH_URL" || {
-        echo "ERROR: could not set DoH URL." >&2
+if [ -n "$UPSTREAM" ]; then
+    "$PHP_BIN" "$APP_DIR/set_url.php" "$UPSTREAM" || {
+        echo "ERROR: could not set upstream." >&2
         exit 1
     }
-    CURRENT_URL="$DOH_URL"
+    CURRENT=$(current_upstream)
 fi
+
+MODE=$("$PHP_BIN" -r '$c = require $argv[1]; echo ($c["mode"] ?? "doh") === "dot" ? "dot" : "doh";' "$APP_DIR/config.php")
+echo "==> Mode: $MODE"
 
 # --- self-test ------------------------------------------------------------------
 SELF_TEST_OK=0
-if [ -n "$CURRENT_URL" ]; then
-    echo "==> Running DoH self-test against $CURRENT_URL"
-    if "$PHP_BIN" "$APP_DIR/doh_proxy.php" --self-test; then
+if [ -n "$CURRENT" ]; then
+    echo "==> Running self-test against $CURRENT"
+    if [ "$MODE" = "dot" ]; then
+        TEST_CMD="$APP_DIR/dot_test.php"
+    else
+        TEST_CMD="$APP_DIR/doh_proxy.php --self-test"
+    fi
+    if "$PHP_BIN" $TEST_CMD; then
         SELF_TEST_OK=1
         echo "==> Self-test passed"
     else
-        echo "WARNING: self-test failed - check the URL. Unbound will NOT be touched." >&2
+        echo "WARNING: self-test failed - check the upstream. Unbound will NOT be touched." >&2
     fi
 else
-    echo "==> No DoH URL configured yet - set it later via Services > DoH Proxy."
+    echo "==> No upstream configured yet - set it later via Services > DoH Proxy."
 fi
 
 # --- webGUI page ----------------------------------------------------------------
@@ -149,8 +168,8 @@ PHPEOF
 "$PHP_BIN" /tmp/dohp_register.php
 rm -f /tmp/dohp_register.php
 
-# --- optional: point Unbound at the proxy ------------------------------------------
-if [ "$SELF_TEST_OK" -eq 1 ] && ask "Point Unbound (DNS Resolver) at the DoH proxy now?"; then
+# --- optional: point Unbound at the upstream ---------------------------------------
+if [ "$SELF_TEST_OK" -eq 1 ] && ask "Point Unbound (DNS Resolver) at this upstream now?"; then
     cat > /tmp/dohp_unbound.php <<'PHPEOF'
 <?php
 require_once('config.inc');
@@ -164,43 +183,52 @@ if (!config_path_enabled('unbound')) {
 }
 
 $c = require '/root/doh-proxy/config.php';
-$addr = ($c['listen_host'] ?? '127.0.0.1') . '@' . ($c['listen_port'] ?? 5053);
+$mode = ($c['mode'] ?? 'doh') === 'dot' ? 'dot' : 'doh';
+
+if ($mode === 'dot') {
+	$port = (int) ($c['dot_port'] ?? 853);
+	$host = (string) $c['dot_host'];
+	$lines = array('# BEGIN DOH-PROXY', 'forward-zone:', '  name: "."', '  forward-tls-upstream: yes');
+	foreach ((array) ($c['dot_ips'] ?? array()) as $ip) {
+		$lines[] = "  forward-addr: {$ip}@{$port}#{$host}";
+	}
+	$lines[] = '# END DOH-PROXY';
+} else {
+	$addr = ($c['listen_host'] ?? '127.0.0.1') . '@' . ($c['listen_port'] ?? 5053);
+	$lines = array('# BEGIN DOH-PROXY', 'server:', '  do-not-query-localhost: no',
+	    'forward-zone:', '  name: "."', "  forward-addr: {$addr}", '# END DOH-PROXY');
+}
+$block = implode("\n", $lines);
 
 $b64 = config_get_path('unbound/custom_options', '');
 $dec = base64_decode($b64, true);
 $txt = ($dec !== false && base64_encode($dec) === $b64) ? $dec : $b64;
 
-if (strpos($txt, 'forward-zone') !== false) {
+if (strpos($txt, '# BEGIN DOH-PROXY') !== false) {
+	$txt = preg_replace('/# BEGIN DOH-PROXY.*?# END DOH-PROXY/s', $block, $txt, 1);
+} elseif (strpos($txt, 'forward-zone') !== false) {
 	echo "unbound: custom options already contain a forward-zone - NOT touching them.\n";
-	echo "         To use the proxy, merge this into DNS Resolver custom options yourself:\n";
-	echo "           server:\n";
-	echo "             do-not-query-localhost: no\n";
-	echo "           forward-zone:\n";
-	echo "             name: \".\"\n";
-	echo "             forward-addr: {$addr}\n";
+	echo "         To use this upstream, merge the following into DNS Resolver custom options yourself:\n";
+	echo preg_replace('/^/m', '           ', $block) . "\n";
 	exit(0);
+} else {
+	$txt = (trim($txt) === '') ? $block : rtrim($txt) . "\n" . $block;
 }
 
-$block = "# BEGIN DOH-PROXY\n"
-	. "server:\n"
-	. "  do-not-query-localhost: no\n"
-	. "forward-zone:\n"
-	. "  name: \".\"\n"
-	. "  forward-addr: {$addr}\n"
-	. "# END DOH-PROXY";
-
-$txt = (trim($txt) === '') ? $block : rtrim($txt) . "\n" . $block;
 config_set_path('unbound/custom_options', base64_encode($txt));
-write_config('doh-proxy installer: unbound forward-zone');
+write_config("doh-proxy installer: unbound forward-zone ({$mode} mode)");
 services_unbound_configure();
-echo "unbound: forward-zone added, resolver reloaded\n";
+echo "unbound: forward-zone applied ({$mode} mode), resolver reloaded\n";
 PHPEOF
     "$PHP_BIN" /tmp/dohp_unbound.php
     rm -f /tmp/dohp_unbound.php
 fi
 
-# --- start the service ---------------------------------------------------------------
-if [ -n "$CURRENT_URL" ]; then
+# --- start/stop the daemon ------------------------------------------------------------
+if [ "$MODE" = "dot" ]; then
+    echo "==> DoT mode: Unbound talks TLS directly, stopping the daemon (not needed)"
+    sh "$APP_DIR/stop.sh" 2>/dev/null || true
+elif [ -n "$CURRENT" ]; then
     echo "==> Starting DoH proxy"
     sh "$APP_DIR/stop.sh" 2>/dev/null || true
     sleep 1
@@ -212,16 +240,16 @@ if [ -n "$CURRENT_URL" ]; then
         echo "WARNING: service does not appear to be listening on $LISTEN - check /var/log/doh-proxy.log" >&2
     fi
 else
-    echo "==> Service not started (no DoH URL yet)."
+    echo "==> Service not started (no upstream yet)."
 fi
 
 echo ""
 echo "======================================================================"
 echo " Done!"
 echo "   GUI  : Services > DoH Proxy in the pfSense webGUI"
-echo "   CLI  : $PHP_BIN $APP_DIR/set_url.php <url> [pin-ip]"
+echo "   CLI  : $PHP_BIN $APP_DIR/set_url.php <https://...|tls://...> [ips]"
 echo "   Logs : /var/log/doh-proxy.log"
 if [ "$SELF_TEST_OK" -ne 1 ]; then
-    echo "   NOTE : DoH URL is not configured/working yet - open the GUI to set it."
+    echo "   NOTE : upstream is not configured/working yet - open the GUI to set it."
 fi
 echo "======================================================================"

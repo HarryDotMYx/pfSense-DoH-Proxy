@@ -5,35 +5,36 @@
 ![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-A tiny DNS-over-HTTPS (DoH) forwarder for pfSense, with a native-looking webGUI page to manage it.
+Encrypted DNS for pfSense — **DoH and DoT** — with a native-looking webGUI page to manage both.
 
-pfSense's built-in DNS Resolver (Unbound) supports DNS-over-TLS out of the box, but **not DoH**. This project adds a small userspace proxy so Unbound can forward all DNS through any DoH endpoint **you choose** — your own server, or a public one.
+pfSense's built-in DNS Resolver (Unbound) supports DNS-over-TLS, but **not DoH**, and even DoT has to be hand-written into the "Custom options" box. This project gives you one GUI page for both:
+
+- **DoH mode** — a small userspace proxy so Unbound can forward all DNS through any RFC 8484 DoH endpoint
+- **DoT mode** — managed natively by Unbound (`forward-tls-upstream`), no daemon at all
 
 ```
-LAN clients ──> Unbound (pfSense DNS Resolver, :53)
-                  │  forward-zone "."
-                  ▼
-        doh-proxy (127.0.0.1:5053, plain-PHP daemon)
-                  │  HTTPS POST application/dns-message
-                  ▼
-        Your DoH server (https://.../dns-query)
+                LAN clients ──> Unbound (pfSense DNS Resolver, :53)
+                                   │  forward-zone "."
+                 ┌─────────────────┴──────────────────┐
+        DoH mode ▼                                    ▼ DoT mode
+   doh-proxy (127.0.0.1:5053)               TLS direct from Unbound
+        │  HTTPS POST dns-message                     │  port 853, cert verified
+        ▼                                             ▼
+   https://your-server/dns-query             tls://your-server
 ```
 
-No default DoH provider is shipped — the endpoint is left empty on purpose and you decide where your DNS goes.
+No default DNS provider is shipped — the upstream is left empty on purpose and you decide where your DNS goes.
 
 ## Features
 
-- **Zero dependencies** — plain PHP using what pfSense already ships (php, curl). No packages, no pkg repo changes.
-- **webGUI page** (*Services > DoH Proxy*) using pfSense's own theme and login:
-  - change the DoH URL, bootstrap IP pin, timeout and debug flag
-  - the upstream is **tested with a real DoH query before saving**, so a typo can't take down DNS for the whole network
-  - every save keeps a timestamped backup of the previous config
-  - service status, restart button and live log tail
-- **TLS enforced** — certificate verification is always on (`CURLOPT_SSL_VERIFYPEER` + hostname check).
-- **Bootstrap IP pin** — optional `host:443:ip` pin (curl `--resolve`) so the proxy can reach the DoH server even when DNS itself is down (no chicken-and-egg).
-- **Self-test mode** — `php doh_proxy.php --self-test` performs a real query end to end.
-- **Survives reboots** — installer registers a `shellcmd` boot hook via pfSense's own config API (`write_config()`), so it shows up in the config history and syncs with config backups.
-- Careful installer: it **refuses to touch Unbound** if your custom options already contain a `forward-zone`, and never overwrites an existing proxy config.
+- **Two modes, one page** — switch between DoH (via local proxy) and DoT (native Unbound) in *Services > DoH Proxy*.
+- **Zero dependencies** — plain PHP using what pfSense already ships (php, curl, openssl). No packages, no pkg repo changes.
+- **Safe by design** — the upstream is **tested with a real DNS query before saving** (HTTPS POST for DoH, verified-TLS query on port 853 for DoT), so a typo can't take down DNS for the whole network. Every save keeps a timestamped backup.
+- **TLS enforced** — certificate verification is always on in both modes.
+- **Bootstrap IP pin** — optional pins so the upstream is reachable even when DNS itself is down (no chicken-and-egg). DoT IPs auto-resolve A + AAAA.
+- **Marker-managed Unbound config** — the page owns only its own `# BEGIN DOH-PROXY … # END DOH-PROXY` block in Unbound custom options and **refuses to touch any forward-zone it doesn't own**.
+- **Self-test tools** — `php doh_proxy.php --self-test` (DoH) and `php dot_test.php` (DoT).
+- **Survives reboots** — boot hook registered via pfSense's own config API (`write_config()`), so it shows up in the config history and syncs with config backups. In DoT mode the boot hook is a no-op (no daemon needed).
 
 ## Requirements
 
@@ -54,24 +55,25 @@ sh /tmp/pfSense-DoH-Proxy-main/install.sh
 The installer will:
 
 1. Copy the proxy to `/root/doh-proxy` (existing `config.php` is kept)
-2. Ask for your DoH URL (leave empty to set it later in the GUI)
-3. Run a **self-test** against that URL
+2. Ask for your upstream — `https://host/dns-query` for DoH, `tls://host` for DoT (leave empty to set it later in the GUI)
+3. Run a **self-test** against that upstream
 4. Install the webGUI page and register *Services > DoH Proxy*
 5. Register boot autostart (`shellcmd`)
-6. **Optionally** point Unbound at the proxy — only if the self-test passed, and only if you don't already have a custom `forward-zone`
-7. Start the service
+6. **Optionally** point Unbound at the upstream — only if the self-test passed, and only inside its own marker block (existing manual `forward-zone`s are never touched)
+7. Start the daemon (DoH mode) or leave everything to Unbound (DoT mode)
 
 Non-interactive install:
 
 ```sh
-sh install.sh -y --url=https://dns.example.com/dns-query
+sh install.sh -y --url=https://dns.example.com/dns-query   # DoH
+sh install.sh -y --url=tls://dns.example.com               # DoT
 ```
 
 ## Configure
 
-- **GUI**: *Services > DoH Proxy* — edit, test, save, restart, watch logs.
-- **CLI**: `php /root/doh-proxy/set_url.php https://dns.example.com/dns-query [pin-ip]` then restart with `sh /root/doh-proxy/stop.sh; sh /root/doh-proxy/start.sh`.
-- **Self-test**: `php /root/doh-proxy/doh_proxy.php --self-test`
+- **GUI**: *Services > DoH Proxy* — pick the mode, edit, test, save, restart, watch logs.
+- **CLI**: `php /root/doh-proxy/set_url.php https://dns.example.com/dns-query [pin-ip]` (DoH) or `php /root/doh-proxy/set_url.php tls://dns.example.com [ip1,ip2]` (DoT), then apply via the GUI or re-run the installer.
+- **Self-test**: `php /root/doh-proxy/doh_proxy.php --self-test` (DoH) / `php /root/doh-proxy/dot_test.php` (DoT)
 
 If the installer skipped Unbound wiring (because you already had a `forward-zone`), merge this into *Services > DNS Resolver > Custom options* yourself:
 
@@ -95,10 +97,12 @@ Removes the service, GUI page, menu entry, boot hook and (if the installer added
 
 | Path | Purpose |
 |---|---|
-| `/root/doh-proxy/doh_proxy.php` | the proxy daemon (UDP+TCP :5053 → DoH) |
-| `/root/doh-proxy/config.php` | runtime config |
-| `/root/doh-proxy/set_url.php` | CLI helper to change the endpoint |
-| `/root/doh-proxy/start.sh`, `stop.sh` | service control (start also restarts Unbound) |
+| `/root/doh-proxy/doh_proxy.php` | the proxy daemon (UDP+TCP :5053 → DoH), used in DoH mode |
+| `/root/doh-proxy/config.php` | runtime config (mode, DoH and DoT settings) |
+| `/root/doh-proxy/set_url.php` | CLI helper to change the upstream (`https://` or `tls://`) |
+| `/root/doh-proxy/dot_check.php` | shared DoT probe (verified TLS + real DNS query) |
+| `/root/doh-proxy/dot_test.php` | CLI DoT self-test |
+| `/root/doh-proxy/start.sh`, `stop.sh` | daemon control (start is a no-op in DoT mode) |
 | `/root/doh-proxy/backup/` | timestamped config backups |
 | `/usr/local/www/doh_proxy_gui.php` | webGUI page |
 | `/var/log/doh-proxy.log` | log |
