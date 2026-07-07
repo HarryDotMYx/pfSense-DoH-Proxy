@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # The project itself is dependency-free on purpose; the only thing worth
+  # auto-updating is the GitHub Actions used by CI.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
