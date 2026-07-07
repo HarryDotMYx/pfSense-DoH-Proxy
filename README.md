@@ -1,5 +1,10 @@
 # pfSense DoH Proxy
 
+![pfSense](https://img.shields.io/badge/pfSense-2.7.x%20%7C%202.8.x-212121?logo=pfsense&logoColor=white)
+![PHP](https://img.shields.io/badge/PHP-8.x-777BB4?logo=php&logoColor=white)
+![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 A tiny DNS-over-HTTPS (DoH) forwarder for pfSense, with a native-looking webGUI page to manage it.
 
 pfSense's built-in DNS Resolver (Unbound) supports DNS-over-TLS out of the box, but **not DoH**. This project adds a small userspace proxy so Unbound can forward all DNS through any DoH endpoint **you choose** — your own server, or a public one.
