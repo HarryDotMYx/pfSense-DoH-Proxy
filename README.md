@@ -41,7 +41,7 @@ No default DoH provider is shipped — the endpoint is left empty on purpose and
 SSH into pfSense as root, then:
 
 ```sh
-fetch -o /tmp/doh-proxy.tar.gz https://github.com/HarryDotMYx/pfSense-DoH-Proxy/archive/refs/heads/main.tar.gz
+curl -sL -o /tmp/doh-proxy.tar.gz https://github.com/HarryDotMYx/pfSense-DoH-Proxy/archive/refs/heads/main.tar.gz
 tar -xzf /tmp/doh-proxy.tar.gz -C /tmp
 sh /tmp/pfSense-DoH-Proxy-main/install.sh
 ```
