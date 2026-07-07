@@ -1,5 +1,6 @@
 # pfSense DoH Proxy
 
+[![Lint](https://github.com/HarryDotMYx/pfSense-DoH-Proxy/actions/workflows/lint.yml/badge.svg)](https://github.com/HarryDotMYx/pfSense-DoH-Proxy/actions/workflows/lint.yml)
 ![pfSense](https://img.shields.io/badge/pfSense-2.7.x%20%7C%202.8.x-212121?logo=pfsense&logoColor=white)
 ![PHP](https://img.shields.io/badge/PHP-8.x-777BB4?logo=php&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)

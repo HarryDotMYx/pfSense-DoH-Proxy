@@ -1,0 +1,32 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  php-lint:
+    name: PHP syntax (php -l)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint all PHP files
+        run: |
+          set -e
+          php -v
+          find src -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  shell-lint:
+    name: Shell syntax + ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: POSIX sh syntax check
+        run: |
+          set -e
+          for f in install.sh uninstall.sh src/start.sh src/stop.sh; do
+            sh -n "$f" && echo "OK $f"
+          done
+      - name: ShellCheck
+        run: shellcheck --shell=sh --severity=warning install.sh uninstall.sh src/start.sh src/stop.sh
