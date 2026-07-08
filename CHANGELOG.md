@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.3.1 — 2026-07-08
+
+### Security
+
+- **Fixed a stored self-XSS in the webGUI status box** — a saved DoH URL
+  containing HTML (e.g. `https://host/<script>…`) was rendered unescaped in
+  the status/info boxes. Exploitation required an authenticated webGUI user
+  with access to the DoH Proxy page, so on single-admin installs this was
+  self-XSS only; on installs with multiple restricted-privilege users it
+  could have been an escalation path. All config-derived values shown in
+  info boxes are now escaped with `htmlspecialchars()`, and the DoH URL
+  validator additionally rejects whitespace, quotes, backslashes, backticks
+  and angle brackets.
+
+### Added
+
+- **Release checksums** — the release workflow now attaches a source tarball
+  and a `SHA256SUMS` file to every release; README gained a "Verified
+  install" section.
+- The GUI mode selector now warns that the DoH proxy is sequential and can
+  saturate on a busy LAN (prefer DoT unless only HTTPS egress is allowed).
+
 ## v1.3.0 — 2026-07-08
 
 ### Added

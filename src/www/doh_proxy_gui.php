@@ -1,6 +1,6 @@
 <?php
 /*
- * doh_proxy_gui.php (v1.3.0)
+ * doh_proxy_gui.php (v1.3.1)
  *
  * Web GUI for encrypted DNS upstreams on pfSense:
  *   - DoH mode: Unbound -> local proxy (/root/doh-proxy) -> https://.../dns-query
@@ -197,7 +197,8 @@ if ($_POST) {
 			$host = dohp_url_host($pconfig['doh_url']);
 			if (empty($pconfig['doh_url']) ||
 			    parse_url($pconfig['doh_url'], PHP_URL_SCHEME) !== 'https' ||
-			    empty($host)) {
+			    empty($host) ||
+			    preg_match('/[\s<>"\'\\\\`]/', $pconfig['doh_url'])) {
 				$input_errors[] = gettext("DoH URL must be a valid https:// URL, e.g. https://dns.example.com/dns-query");
 			}
 			if (!empty($pconfig['pin_ip']) && !is_ipaddr($pconfig['pin_ip'])) {
@@ -219,10 +220,10 @@ if ($_POST) {
 				$code = dohp_test_doh($pconfig['doh_url'], $pconfig['pin_ip']);
 				if ($code === '200') {
 					$testmsg = sprintf(gettext('DoH upstream test OK (HTTP %1$s from %2$s via %3$s).'),
-					    $code, $host, $pconfig['pin_ip']);
+					    htmlspecialchars($code), htmlspecialchars($host), $pconfig['pin_ip']);
 				} else {
 					$msg = sprintf(gettext('DoH upstream test FAILED (HTTP "%1$s" from %2$s via %3$s).'),
-					    $code, $host, $pconfig['pin_ip']);
+					    htmlspecialchars($code), htmlspecialchars($host), $pconfig['pin_ip']);
 					if (isset($_POST['save'])) {
 						$msg .= ' ' . gettext('Nothing was saved. Check "Skip upstream test" to save anyway.');
 					}
@@ -353,7 +354,8 @@ if ($conf['mode'] === 'dot') {
 	$running = function_exists('is_service_running') ? is_service_running('unbound') : true;
 	$cls = ($managed && $running) ? 'success' : 'warning';
 	print_info_box(sprintf(gettext('Mode: DoT (native Unbound) — upstream: %1$s:%2$d [%3$s] — Unbound: %4$s, custom options %5$s'),
-	    $conf['dot_host'], $conf['dot_port'], implode(', ', (array) $conf['dot_ips']),
+	    htmlspecialchars($conf['dot_host']), (int) $conf['dot_port'],
+	    htmlspecialchars(implode(', ', (array) $conf['dot_ips'])),
 	    $running ? gettext('running') : gettext('NOT running'),
 	    $managed ? gettext('managed by this page') : gettext('NOT managed (manual forward-zone present)')), $cls, false);
 	$pid = dohp_running();
@@ -364,7 +366,8 @@ if ($conf['mode'] === 'dot') {
 	$pid = dohp_running();
 	if ($pid) {
 		print_info_box(sprintf(gettext('Mode: DoH — proxy running (PID %1$d) on %2$s:%3$d — upstream: %4$s'),
-		    $pid, $conf['listen_host'], $conf['listen_port'], $conf['doh_url']), 'success', false);
+		    $pid, htmlspecialchars($conf['listen_host']), (int) $conf['listen_port'],
+		    htmlspecialchars($conf['doh_url'])), 'success', false);
 	} else {
 		print_info_box(gettext('Mode: DoH — proxy is NOT running.'), 'danger', false);
 	}
@@ -381,7 +384,9 @@ $section->addInput(new Form_Select(
 		'doh' => gettext('DNS over HTTPS (DoH) — via local proxy daemon'),
 		'dot' => gettext('DNS over TLS (DoT) — native Unbound, no daemon'),
 	)
-))->setHelp('Both modes verify the server certificate and are tested with a real DNS query before saving.');
+))->setHelp('Both modes verify the server certificate and are tested with a real DNS query before saving. ' .
+	'Note: the DoH proxy handles queries sequentially and can saturate on a busy LAN — ' .
+	'prefer DoT unless only HTTPS egress is allowed.');
 $form->add($section);
 
 $section = new Form_Section('DoH Settings');

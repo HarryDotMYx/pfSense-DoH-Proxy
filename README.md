@@ -73,6 +73,21 @@ sh install.sh -y --url=https://dns.example.com/dns-query   # DoH
 sh install.sh -y --url=tls://dns.example.com               # DoT
 ```
 
+### Verified install (recommended)
+
+Each release ships a tarball plus a `SHA256SUMS` file. To verify before running anything as root:
+
+```sh
+VER=v1.3.1
+curl -sLO https://github.com/HarryDotMYx/pfSense-DoH-Proxy/releases/download/$VER/pfsense-doh-proxy-$VER.tar.gz
+curl -sLO https://github.com/HarryDotMYx/pfSense-DoH-Proxy/releases/download/$VER/SHA256SUMS
+sha256 -c "$(awk '{print $1}' SHA256SUMS)" pfsense-doh-proxy-$VER.tar.gz   # FreeBSD/pfSense
+tar -xzf pfsense-doh-proxy-$VER.tar.gz
+sh pfsense-doh-proxy-$VER/install.sh
+```
+
+(Checksums come from the same GitHub account as the code, so this protects against corrupted/tampered downloads — not against a full account compromise. Audit `install.sh` yourself if that is in your threat model; it is short on purpose.)
+
 ## Configure
 
 - **GUI**: *Services > DoH Proxy* — pick the mode, edit, test, save, restart, watch logs.
