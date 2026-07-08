@@ -78,7 +78,7 @@ sh install.sh -y --url=tls://dns.example.com               # DoT
 Each release ships a tarball plus a `SHA256SUMS` file. To verify before running anything as root:
 
 ```sh
-VER=v1.3.4
+VER=v1.3.5
 curl -sLO https://github.com/HarryDotMYx/pfSense-DoH-Proxy/releases/download/$VER/pfsense-doh-proxy-$VER.tar.gz
 curl -sLO https://github.com/HarryDotMYx/pfSense-DoH-Proxy/releases/download/$VER/SHA256SUMS
 sha256 -c "$(awk '{print $1}' SHA256SUMS)" pfsense-doh-proxy-$VER.tar.gz   # FreeBSD/pfSense

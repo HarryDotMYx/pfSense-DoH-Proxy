@@ -1,6 +1,6 @@
 <?php
 /*
- * doh_proxy_gui.php (v1.3.4)
+ * doh_proxy_gui.php (v1.3.5)
  *
  * Web GUI for encrypted DNS upstreams on pfSense:
  *   - DoH mode: Unbound -> local proxy (/root/doh-proxy) -> https://.../dns-query
@@ -170,8 +170,10 @@ $pconfig = array(
 	'dot_port' => $conf['dot_port'],
 );
 if (!empty($conf['doh_resolve'])) {
-	$parts = explode(':', $conf['doh_resolve']);
-	$pconfig['pin_ip'] = end($parts);
+	/* format is host:443:ip - limit 3 so an IPv6 pin (which itself
+	 * contains colons) survives intact in the third element */
+	$parts = explode(':', $conf['doh_resolve'], 3);
+	$pconfig['pin_ip'] = $parts[2] ?? '';
 }
 
 $input_errors = array();
@@ -186,7 +188,11 @@ if ($_POST) {
 			$savemsg = gettext("Unbound restarted.");
 		} else {
 			dohp_proxy_start();
-			$savemsg = gettext("Service restarted.");
+			if (dohp_running()) {
+				$savemsg = gettext("Service restarted.");
+			} else {
+				$input_errors[] = gettext('Service did not start - is a DoH URL configured? Check /var/log/doh-proxy.log.');
+			}
 		}
 	} elseif (isset($_POST['save']) || isset($_POST['testbtn'])) {
 		$mode = ($_POST['mode'] ?? 'doh') === 'dot' ? 'dot' : 'doh';

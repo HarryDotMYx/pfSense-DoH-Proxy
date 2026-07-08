@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.3.5 — 2026-07-08
+
+Fifth review pass: one real (IPv6 corner-case) bug and one misleading
+message.
+
+### Fixed
+
+- **IPv6 pin IPs no longer mangled in the GUI** — the Pinned IP field was
+  filled by splitting `host:443:ip` on every colon and taking the last
+  piece, so an IPv6 pin like `2606:4700:4700::1111` displayed as `1111`
+  (and failed validation on the next save). Now split with a limit so the
+  address survives intact. (curl itself accepts IPv6 in `--resolve` both
+  bracketed and unbracketed — verified live — so stored pins always worked;
+  only the display/re-save path was broken.)
+- **"Restart Service" tells the truth** — in DoH mode it now reports an
+  error when the daemon did not actually come up (e.g. no DoH URL
+  configured yet) instead of always claiming "Service restarted."
+
 ## v1.3.4 — 2026-07-08
 
 Fourth review pass. All minor robustness items; no exploitable issues.
