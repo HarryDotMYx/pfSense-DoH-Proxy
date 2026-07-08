@@ -1,6 +1,6 @@
 <?php
 /*
- * doh_proxy_gui.php (v1.3.2)
+ * doh_proxy_gui.php (v1.3.3)
  *
  * Web GUI for encrypted DNS upstreams on pfSense:
  *   - DoH mode: Unbound -> local proxy (/root/doh-proxy) -> https://.../dns-query

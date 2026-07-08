@@ -9,6 +9,16 @@ if [ "$MODE" = "dot" ]; then
     exit 0
 fi
 
+# Single-flight guard: the boot shellcmd and a GUI save can race; only one
+# starter may proceed. A crashed starter cannot wedge us: a lock older than
+# 2 minutes is cleared for the next attempt.
+LOCK_DIR="/var/run/doh-proxy.start.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    find "$LOCK_DIR" -maxdepth 0 -mmin +2 -exec rmdir {} \; 2>/dev/null
+    exit 0
+fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT INT TERM
+
 if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     exit 0
 fi

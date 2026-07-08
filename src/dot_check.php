@@ -63,6 +63,10 @@ function dohp_dot_probe(string $host, string $ip, int $port, ?string &$detail = 
 			$detail = 'short DNS response over TLS';
 			return false;
 		}
+		if (substr($response, 0, 2) !== substr($query, 0, 2)) {
+			$detail = 'DNS response ID mismatch over TLS';
+			return false;
+		}
 	} finally {
 		fclose($fp);
 	}

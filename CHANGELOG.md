@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.3.3 — 2026-07-08
+
+Third review pass: closes every remaining known nit. No security issues.
+
+### Fixed
+
+- **Oversized UDP answers now follow RFC 1035 truncation** — a DoH response
+  larger than 1232 bytes (safe EDNS default) is no longer blindly relayed
+  over UDP (where it could be silently cut off at the socket); the daemon
+  replies with the query echoed back with QR+TC set, so the client retries
+  over TCP and gets the full answer. Matters for large (e.g. DNSSEC)
+  responses in DoH mode.
+- **Non-DNS datagrams are dropped, not relayed** — UDP packets and TCP
+  payloads shorter than a DNS header (12 bytes) are ignored instead of
+  being forwarded upstream (which produced HTTP 400 log spam).
+- **`stop.sh` verifies the PID belongs to the daemon** (`ps -o command`
+  contains `doh_proxy.php`) before killing, guarding against a stale
+  pidfile whose PID number was reused by an unrelated process.
+- **DoT probe verifies the DNS response ID** matches the query ID.
+- **`start.sh` single-flight lock** — the boot shellcmd and a GUI save can
+  no longer double-start the daemon (mkdir lock; stale locks older than
+  2 minutes clear themselves, so a crashed starter cannot wedge startup).
+
 ## v1.3.2 — 2026-07-08
 
 Full-repo re-review: no new security issues; six correctness/robustness

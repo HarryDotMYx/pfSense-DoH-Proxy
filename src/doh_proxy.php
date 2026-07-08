@@ -68,6 +68,17 @@ function doh_exchange(string $query, array $config): string {
     return $response;
 }
 
+/* RFC 1035: a response too large for UDP must be truncated with the TC bit
+ * set so the client retries over TCP. 1232 bytes is the safe EDNS default
+ * (DNS Flag Day 2020). Echo the query back with QR + TC set. */
+const UDP_MAX_RESPONSE = 1232;
+
+function udp_truncated_reply(string $query): string {
+    $reply = $query;
+    $reply[2] = chr(ord($reply[2]) | 0x82); /* QR=1, TC=1; keep opcode + RD */
+    return $reply;
+}
+
 function build_dns_query(string $name, int $id = 0x1234): string {
     $labels = explode('.', trim($name, '.'));
     $buffer = '';
@@ -182,12 +193,16 @@ if (extension_loaded('sockets')) {
                         $peer = '';
                         $peerPort = 0;
                         $bytes = @socket_recvfrom($udpSocket, $query, 65535, 0, $peer, $peerPort);
-                        if ($bytes === false || $bytes === 0 || $query === '') {
-                            continue;
+                        if ($bytes === false || $bytes === 0 || strlen($query) < 12) {
+                            continue; /* not a DNS message; do not relay */
                         }
                         proxy_debug('UDP query from ' . $peer . ':' . $peerPort . ' len=' . strlen($query));
                         try {
                             $response = doh_exchange($query, $config);
+                            if (strlen($response) > UDP_MAX_RESPONSE) {
+                                proxy_debug('UDP response too large (' . strlen($response) . ' bytes), replying TC for TCP retry');
+                                $response = udp_truncated_reply($query);
+                            }
                             @socket_sendto($udpSocket, $response, strlen($response), 0, $peer, $peerPort);
                         } catch (Throwable $e) {
                             proxy_log('UDP exchange failed: ' . $e->getMessage());
@@ -209,7 +224,7 @@ if (extension_loaded('sockets')) {
                             if ($prefix !== null) {
                                 $length = unpack('nlen', $prefix);
                                 $query = read_exact_socket($client, (int) $length['len']);
-                                if ($query !== null) {
+                                if ($query !== null && strlen($query) >= 12) {
                                     proxy_debug('TCP query len=' . strlen($query));
                                     $response = doh_exchange($query, $config);
                                     write_all_socket($client, pack('n', strlen($response)) . $response);
@@ -262,13 +277,17 @@ while (true) {
         if ($server === $udp) {
             $peer = null;
             $query = @stream_socket_recvfrom($udp, 65535, 0, $peer);
-            if ($query === false || $query === '') {
-                continue;
+            if ($query === false || strlen($query) < 12) {
+                continue; /* not a DNS message; do not relay */
             }
             $handledAny = true;
             proxy_debug('UDP query from ' . ($peer ?? 'unknown') . ' len=' . strlen($query));
             try {
                 $response = doh_exchange($query, $config);
+                if (strlen($response) > UDP_MAX_RESPONSE) {
+                    proxy_debug('UDP response too large (' . strlen($response) . ' bytes), replying TC for TCP retry');
+                    $response = udp_truncated_reply($query);
+                }
                 @stream_socket_sendto($udp, $response, 0, (string) $peer);
             } catch (Throwable $e) {
                 proxy_log('UDP exchange failed: ' . $e->getMessage());
@@ -289,7 +308,7 @@ while (true) {
                 if ($prefix !== null) {
                     $length = unpack('nlen', $prefix);
                     $query = read_exact_stream($client, (int) $length['len']);
-                    if ($query !== null) {
+                    if ($query !== null && strlen($query) >= 12) {
                         proxy_debug('TCP query len=' . strlen($query));
                         $response = doh_exchange($query, $config);
                         fwrite($client, pack('n', strlen($response)) . $response);
