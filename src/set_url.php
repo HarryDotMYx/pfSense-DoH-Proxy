@@ -22,7 +22,8 @@ $scheme = parse_url($url, PHP_URL_SCHEME);
 $host = parse_url($url, PHP_URL_HOST);
 
 if ($url === '' || !is_string($host) || $host === '' ||
-    !in_array($scheme, ['https', 'tls'], true)) {
+    !in_array($scheme, ['https', 'tls'], true) ||
+    preg_match('/[\s<>"\'\\\\`]/', $url)) {
 	fwrite(STDERR, "Usage: php set_url.php https://host/dns-query [pin-ip]\n");
 	fwrite(STDERR, "       php set_url.php tls://host[:port] [ip1,ip2,...]\n");
 	exit(1);

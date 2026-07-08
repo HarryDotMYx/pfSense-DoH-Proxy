@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.3.2 — 2026-07-08
+
+Full-repo re-review: no new security issues; six correctness/robustness
+fixes.
+
+### Fixed
+
+- **DoH daemon reuses one curl handle** for the process lifetime, so the
+  HTTPS connection stays alive between queries — one TLS handshake instead
+  of one per lookup (a transport error drops the handle so the next query
+  reconnects cleanly). Meaningful speedup for the sequential daemon.
+- **`start.sh` no longer truncates the log on every start** — it appends,
+  and trims the file to the last 500 lines once it exceeds ~1 MB.
+- **`start.sh` readiness check follows `listen_host`/`listen_port` from
+  `config.php`** instead of hardcoding `127.0.0.1:5053`.
+- **GUI DoH upstream test** now uses `&` when the endpoint URL already has
+  a query string (previously produced a malformed double-`?` URL).
+- **`set_url.php` applies the same URL character hardening as the webGUI**
+  (rejects whitespace, quotes, backslashes, backticks, angle brackets).
+- **CI now lints `src/system_patch.sh`** (sh -n + ShellCheck) — it was
+  missing from the hardcoded file list since v1.2.0.
+
 ## v1.3.1 — 2026-07-08
 
 ### Security

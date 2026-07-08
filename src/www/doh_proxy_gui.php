@@ -1,6 +1,6 @@
 <?php
 /*
- * doh_proxy_gui.php (v1.3.1)
+ * doh_proxy_gui.php (v1.3.2)
  *
  * Web GUI for encrypted DNS upstreams on pfSense:
  *   - DoH mode: Unbound -> local proxy (/root/doh-proxy) -> https://.../dns-query
@@ -68,9 +68,10 @@ function dohp_url_host($url) {
 
 function dohp_test_doh($url, $pin_ip) {
 	$host = dohp_url_host($url);
+	$sep = (strpos($url, '?') === false) ? '?' : '&';
 	$cmd = '/usr/local/bin/curl -s -o /dev/null -w %{http_code} --max-time 8 ' .
 	    '--resolve ' . escapeshellarg($host . ':443:' . $pin_ip) . ' ' .
-	    escapeshellarg($url . '?dns=' . DOHP_TEST_QUERY);
+	    escapeshellarg($url . $sep . 'dns=' . DOHP_TEST_QUERY);
 	return trim((string) shell_exec($cmd . ' 2>/dev/null'));
 }
 

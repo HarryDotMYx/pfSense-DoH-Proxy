@@ -18,37 +18,47 @@ function proxy_debug(string $message): void {
 }
 
 function doh_exchange(string $query, array $config): string {
-    $ch = curl_init($config['doh_url']);
-    if ($ch === false) {
-        throw new RuntimeException('curl init failed');
+    /* One handle for the process lifetime: curl keeps the HTTPS connection
+     * alive between queries, saving a full TLS handshake per lookup. */
+    static $ch = null;
+
+    if ($ch === null) {
+        $ch = curl_init();
+        if ($ch === false) {
+            $ch = null;
+            throw new RuntimeException('curl init failed');
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_URL => (string) $config['doh_url'],
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/dns-message',
+                'Accept: application/dns-message',
+            ],
+            CURLOPT_TIMEOUT => (int) $config['timeout_seconds'],
+            CURLOPT_CONNECTTIMEOUT => (int) $config['timeout_seconds'],
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_USERAGENT => 'pfSense-DoH-Proxy/1.0',
+        ]);
+        if (!empty($config['doh_resolve'])) {
+            curl_setopt($ch, CURLOPT_RESOLVE, [(string) $config['doh_resolve']]);
+        }
     }
 
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $query,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/dns-message',
-            'Accept: application/dns-message',
-        ],
-        CURLOPT_TIMEOUT => (int) $config['timeout_seconds'],
-        CURLOPT_CONNECTTIMEOUT => (int) $config['timeout_seconds'],
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_SSL_VERIFYHOST => 2,
-        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-        CURLOPT_USERAGENT => 'pfSense-DoH-Proxy/1.0',
-    ]);
-
-    if (!empty($config['doh_resolve'])) {
-        curl_setopt($ch, CURLOPT_RESOLVE, [(string) $config['doh_resolve']]);
-    }
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $query);
 
     $response = curl_exec($ch);
     $httpCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $error = curl_error($ch);
-    curl_close($ch);
 
     if (!is_string($response) || $response === '') {
+        /* Transport-level failure: drop the handle so the next query starts
+         * from a clean connection instead of a possibly wedged one. */
+        curl_close($ch);
+        $ch = null;
         throw new RuntimeException('empty DoH response' . ($error !== '' ? ': ' . $error : ''));
     }
     if ($httpCode !== 200) {
