@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.2.0 — 2026-07-08
+
+### Added
+
+- **General Setup "Encrypted DNS" notice** (`system_patch.sh`) — while the
+  DOH-PROXY forward-zone is active in Unbound, *System > General Setup* shows
+  an alert **"DoH/DoT is currently running"** linking to *Services > DoH
+  Proxy*, and the unused DNS Server Settings fields (server rows, add button,
+  override checkbox, resolution behavior) are grayed out. Details:
+  - fields become readonly + `pointer-events: none`, **not** `disabled`, so
+    the saved values still submit on Save and nothing gets wiped
+  - detection is at page-render time — turning DoH/DoT off re-enables the
+    section automatically, no re-patch needed
+  - marker-managed (`BEGIN/END DOH-PROXY PATCH`) and `php -l` gated on both
+    apply and revert; a pristine `system.php.orig` is kept in
+    `/root/doh-proxy/backup/`
+  - installer applies it, uninstaller reverts it (with a standalone fallback
+    if `/root/doh-proxy` was already deleted)
+  - pfSense upgrades replace `system.php` and drop the patch — re-apply with
+    `sh /root/doh-proxy/system_patch.sh apply`
+  - if a future pfSense version changes the page layout, the patch skips
+    itself with a warning instead of failing the install
+
 ## v1.1.0 — 2026-07-07
 
 DoH **and** DoT: the page now manages both encrypted-DNS modes.

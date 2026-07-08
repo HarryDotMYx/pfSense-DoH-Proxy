@@ -99,6 +99,22 @@ PHPEOF
 "$PHP_BIN" /tmp/dohp_unregister.php
 rm -f /tmp/dohp_unregister.php
 
+echo "==> Reverting System > General Setup patch"
+if [ -f "$APP_DIR/system_patch.sh" ]; then
+    sh "$APP_DIR/system_patch.sh" revert || true
+elif grep -q "DOH-PROXY PATCH" /usr/local/www/system.php 2>/dev/null; then
+    # fallback: strip the marker-delimited blocks in place (php -l gated)
+    tmp=$(mktemp)
+    sed '/BEGIN DOH-PROXY PATCH/,/END DOH-PROXY PATCH/d' /usr/local/www/system.php > "$tmp"
+    if "$PHP_BIN" -l "$tmp" >/dev/null 2>&1; then
+        cat "$tmp" > /usr/local/www/system.php
+        echo "system.php: patch removed"
+    else
+        echo "WARNING: reverted system.php fails php -l - leaving it untouched." >&2
+    fi
+    rm -f "$tmp"
+fi
+
 echo "==> Removing GUI page"
 rm -f "$WWW_PAGE"
 

@@ -65,7 +65,8 @@ cp "$SRC_DIR/dot_check.php" "$APP_DIR/dot_check.php"
 cp "$SRC_DIR/dot_test.php"  "$APP_DIR/dot_test.php"
 cp "$SRC_DIR/start.sh"      "$APP_DIR/start.sh"
 cp "$SRC_DIR/stop.sh"       "$APP_DIR/stop.sh"
-chmod 755 "$APP_DIR/start.sh" "$APP_DIR/stop.sh"
+cp "$SRC_DIR/system_patch.sh" "$APP_DIR/system_patch.sh"
+chmod 755 "$APP_DIR/start.sh" "$APP_DIR/stop.sh" "$APP_DIR/system_patch.sh"
 
 if [ ! -f "$APP_DIR/config.php" ]; then
     cp "$SRC_DIR/config.sample.php" "$APP_DIR/config.php"
@@ -123,6 +124,13 @@ fi
 echo "==> Installing webGUI page"
 cp "$SRC_DIR/www/doh_proxy_gui.php" "$WWW_PAGE"
 chmod 644 "$WWW_PAGE"
+
+# --- General Setup notice ---------------------------------------------------------
+# While the DOH-PROXY forward-zone is active, System > General Setup shows an
+# "Encrypted DNS" notice and grays out the unused DNS Server Settings fields.
+echo "==> Patching System > General Setup (Encrypted DNS notice)"
+sh "$APP_DIR/system_patch.sh" apply || \
+    echo "WARNING: could not patch system.php - cosmetic only, everything else works." >&2
 
 # --- menu entry + boot autostart (via pfSense config API) -------------------------
 echo "==> Registering menu entry and boot autostart"
