@@ -35,6 +35,7 @@ No default DNS provider is shipped — the upstream is left empty on purpose and
 - **Bootstrap IP pin** — optional pins so the upstream is reachable even when DNS itself is down (no chicken-and-egg). DoT IPs auto-resolve A + AAAA.
 - **Marker-managed Unbound config** — the page owns only its own `# BEGIN DOH-PROXY … # END DOH-PROXY` block in Unbound custom options and **refuses to touch any forward-zone it doesn't own**.
 - **General Setup awareness** — while encrypted forwarding is active, *System > General Setup* shows an **"Encrypted DNS — DoH/DoT is currently running"** notice linking to the DoH Proxy page, and the unused DNS Server Settings fields are grayed out (values are preserved — readonly, not `disabled`, so nothing gets wiped on Save). Turn DoH/DoT off and the section re-enables itself.
+- **Dashboard awareness** — the *System Information* widget's **DNS server(s)** row shows the encrypted upstream in use — 🔒 `DoT: cloudflare-dns.com:853` or 🔒 `DoH: https://host/dns-query` — linking to the DoH Proxy page.
 - **Self-test tools** — `php doh_proxy.php --self-test` (DoH) and `php dot_test.php` (DoT).
 - **Survives reboots** — boot hook registered via pfSense's own config API (`write_config()`), so it shows up in the config history and syncs with config backups. In DoT mode the boot hook is a no-op (no daemon needed).
 
@@ -60,7 +61,7 @@ The installer will:
 2. Ask for your upstream — `https://host/dns-query` for DoH, `tls://host` for DoT (leave empty to set it later in the GUI)
 3. Run a **self-test** against that upstream
 4. Install the webGUI page and register *Services > DoH Proxy*
-5. Patch *System > General Setup* so it shows the "Encrypted DNS" notice while forwarding is active (original `system.php` is backed up, patch is `php -l` gated)
+5. Patch *System > General Setup* (Encrypted DNS notice, unused fields grayed out) and the Dashboard *System Information* widget (DoH/DoT upstream shown under DNS server(s)) — originals are backed up, patches are `php -l` gated
 6. Register boot autostart (`shellcmd`)
 7. **Optionally** point Unbound at the upstream — only if the self-test passed, and only inside its own marker block (existing manual `forward-zone`s are never touched)
 8. Start the daemon (DoH mode) or leave everything to Unbound (DoT mode)
@@ -106,8 +107,8 @@ Removes the service, GUI page, menu entry, boot hook and (if the installer added
 | `/root/doh-proxy/dot_check.php` | shared DoT probe (verified TLS + real DNS query) |
 | `/root/doh-proxy/dot_test.php` | CLI DoT self-test |
 | `/root/doh-proxy/start.sh`, `stop.sh` | daemon control (start is a no-op in DoT mode) |
-| `/root/doh-proxy/system_patch.sh` | applies/reverts the *General Setup* "Encrypted DNS" notice (`apply`/`revert`) |
-| `/root/doh-proxy/backup/` | timestamped config backups + pristine `system.php.orig` |
+| `/root/doh-proxy/system_patch.sh` | applies/reverts the *General Setup* notice + Dashboard widget status (`apply`/`revert`) |
+| `/root/doh-proxy/backup/` | timestamped config backups + pristine `system.php.orig` / `system_information.widget.php.orig` |
 | `/usr/local/www/doh_proxy_gui.php` | webGUI page |
 | `/var/log/doh-proxy.log` | log |
 
@@ -116,7 +117,7 @@ Removes the service, GUI page, menu entry, boot hook and (if the installer added
 - **The DoH proxy handles queries sequentially** (single PHP process, one HTTPS round-trip at a time). Unbound caches in front of it, but on a busy network with many uncached lookups the proxy can saturate and clients will see SERVFAILs. **If that happens, switch to DoT mode** — same encryption, handled natively (and multi-threaded) by Unbound. DoH mode is best for small networks or when only HTTPS egress is allowed.
 - The proxy binds to `127.0.0.1` only; nothing is exposed to the LAN or WAN.
 - If you change `listen_port` in the config, update the readiness check in `start.sh` too.
-- pfSense upgrades may remove `/usr/local/www/doh_proxy_gui.php` and will replace `system.php` (which silently drops the General Setup notice); just re-run the installer afterwards, or `sh /root/doh-proxy/system_patch.sh apply` for the notice alone. Your config in `/root/doh-proxy` survives.
+- pfSense upgrades may remove `/usr/local/www/doh_proxy_gui.php` and will replace `system.php` and the Dashboard widget (silently dropping the Encrypted DNS notices); just re-run the installer afterwards, or `sh /root/doh-proxy/system_patch.sh apply` for the notices alone. Your config in `/root/doh-proxy` survives.
 
 ## License
 

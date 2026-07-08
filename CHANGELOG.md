@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.3.0 — 2026-07-08
+
+### Added
+
+- **Dashboard "DNS server(s)" status** — while the DOH-PROXY forward-zone is
+  active, the *System Information* widget shows the encrypted upstream as the
+  first list entry with a green lock: `DoT: host:port` (DoT mode) or
+  `DoH: https://…` (DoH mode), read live from `/root/doh-proxy/config.php`
+  and linking to *Services > DoH Proxy*. Same marker-managed, `php -l` gated,
+  render-time-detected mechanism as the General Setup notice; `system_patch.sh
+  apply|revert` now handles both pages (widget anchor supports both pfSense
+  2.8 `get_dns_nameservers()` and 2.7 `get_dns_servers()`; unrecognized
+  layouts are skipped with a warning).
+
 ## v1.2.0 — 2026-07-08
 
 ### Added

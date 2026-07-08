@@ -125,12 +125,13 @@ echo "==> Installing webGUI page"
 cp "$SRC_DIR/www/doh_proxy_gui.php" "$WWW_PAGE"
 chmod 644 "$WWW_PAGE"
 
-# --- General Setup notice ---------------------------------------------------------
+# --- General Setup notice + Dashboard widget ---------------------------------------
 # While the DOH-PROXY forward-zone is active, System > General Setup shows an
-# "Encrypted DNS" notice and grays out the unused DNS Server Settings fields.
-echo "==> Patching System > General Setup (Encrypted DNS notice)"
+# "Encrypted DNS" notice (unused DNS Server Settings fields grayed out) and the
+# Dashboard "DNS server(s)" row shows the DoH/DoT upstream in use.
+echo "==> Patching System > General Setup and Dashboard widget (Encrypted DNS)"
 sh "$APP_DIR/system_patch.sh" apply || \
-    echo "WARNING: could not patch system.php - cosmetic only, everything else works." >&2
+    echo "WARNING: could not patch the stock pages - cosmetic only, everything else works." >&2
 
 # --- menu entry + boot autostart (via pfSense config API) -------------------------
 echo "==> Registering menu entry and boot autostart"
