@@ -214,7 +214,10 @@ $dec = base64_decode($b64, true);
 $txt = ($dec !== false && base64_encode($dec) === $b64) ? $dec : $b64;
 
 if (strpos($txt, '# BEGIN DOH-PROXY') !== false) {
-	$txt = preg_replace('/# BEGIN DOH-PROXY.*?# END DOH-PROXY/s', $block, $txt, 1);
+	/* callback form so "$1"/"\1" in config values are never treated as
+	 * replacement backreferences */
+	$txt = preg_replace_callback('/# BEGIN DOH-PROXY.*?# END DOH-PROXY/s',
+	    function ($m) use ($block) { return $block; }, $txt, 1);
 } elseif (strpos($txt, 'forward-zone') !== false) {
 	echo "unbound: custom options already contain a forward-zone - NOT touching them.\n";
 	echo "         To use this upstream, merge the following into DNS Resolver custom options yourself:\n";

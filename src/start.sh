@@ -9,6 +9,13 @@ if [ "$MODE" = "dot" ]; then
     exit 0
 fi
 
+# No upstream configured yet? Then there is nothing useful to start.
+DOH_URL=$(/usr/local/bin/php -r '$c = @include "/root/doh-proxy/config.php"; echo is_array($c) ? (string) ($c["doh_url"] ?? "") : "";' 2>/dev/null)
+if [ -z "$DOH_URL" ]; then
+    echo "[$(date -Iseconds)] start.sh: no doh_url configured - not starting the daemon." >> "$LOG_FILE"
+    exit 0
+fi
+
 # Single-flight guard: the boot shellcmd and a GUI save can race; only one
 # starter may proceed. A crashed starter cannot wedge us: a lock older than
 # 2 minutes is cleared for the next attempt.

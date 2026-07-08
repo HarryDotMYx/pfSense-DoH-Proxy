@@ -30,6 +30,7 @@ function dohp_dot_probe(string $host, string $ip, int $port, ?string &$detail = 
 		'verify_peer_name' => true,
 		'allow_self_signed' => false,
 		'SNI_enabled' => true,
+		'crypto_method' => STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT,
 	)));
 	$addr = (strpos($ip, ':') !== false) ? "[{$ip}]" : $ip;
 

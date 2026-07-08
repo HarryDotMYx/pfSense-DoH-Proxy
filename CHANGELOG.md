@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.4 — 2026-07-08
+
+Fourth review pass. All minor robustness items; no exploitable issues.
+
+### Fixed
+
+- **Unbound block replacement is backreference-proof** — the GUI and the
+  installer now use `preg_replace_callback`, so `$1`/`\1` sequences in
+  config values can never be interpreted as regex replacement
+  backreferences and corrupt the marker block.
+- **`set_url.php` validates the hostname shape** (`parse_url` alone is
+  lenient) so odd characters cannot reach the Unbound block via the CLI —
+  now matches the webGUI's `is_hostname` strictness.
+- **`start.sh` refuses to start the daemon when `doh_url` is empty**
+  (previously it bound the port and every query just failed).
+- **GUI status no longer trusts a reused PID** — `dohp_running()` verifies
+  the process command line actually is `doh_proxy.php`, matching the
+  `stop.sh` guard from v1.3.3.
+- **DoT probe pins TLS 1.2+ explicitly** (`crypto_method`) instead of
+  relying on system defaults.
+- README: note that restoring a config backup onto a fresh pfSense brings
+  back the menu/boot hook/Unbound block but not `/root/doh-proxy` — re-run
+  the installer after a restore.
+
 ## v1.3.3 — 2026-07-08
 
 Third review pass: closes every remaining known nit. No security issues.

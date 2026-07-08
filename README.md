@@ -78,7 +78,7 @@ sh install.sh -y --url=tls://dns.example.com               # DoT
 Each release ships a tarball plus a `SHA256SUMS` file. To verify before running anything as root:
 
 ```sh
-VER=v1.3.3
+VER=v1.3.4
 curl -sLO https://github.com/HarryDotMYx/pfSense-DoH-Proxy/releases/download/$VER/pfsense-doh-proxy-$VER.tar.gz
 curl -sLO https://github.com/HarryDotMYx/pfSense-DoH-Proxy/releases/download/$VER/SHA256SUMS
 sha256 -c "$(awk '{print $1}' SHA256SUMS)" pfsense-doh-proxy-$VER.tar.gz   # FreeBSD/pfSense
@@ -132,6 +132,7 @@ Removes the service, GUI page, menu entry, boot hook and (if the installer added
 - **The DoH proxy handles queries sequentially** (single PHP process, one HTTPS round-trip at a time). Unbound caches in front of it, but on a busy network with many uncached lookups the proxy can saturate and clients will see SERVFAILs. **If that happens, switch to DoT mode** — same encryption, handled natively (and multi-threaded) by Unbound. DoH mode is best for small networks or when only HTTPS egress is allowed.
 - The proxy binds to `127.0.0.1` only; nothing is exposed to the LAN or WAN.
 - pfSense upgrades may remove `/usr/local/www/doh_proxy_gui.php` and will replace `system.php` and the Dashboard widget (silently dropping the Encrypted DNS notices); just re-run the installer afterwards, or `sh /root/doh-proxy/system_patch.sh apply` for the notices alone. Your config in `/root/doh-proxy` survives.
+- **Restoring a pfSense config backup onto a fresh install** brings back the menu entry, boot hook and Unbound block (they live in `config.xml`) but **not** the files in `/root/doh-proxy` or the webGUI page — re-run the installer after a restore.
 
 ## License
 

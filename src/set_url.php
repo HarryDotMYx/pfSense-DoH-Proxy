@@ -29,6 +29,13 @@ if ($url === '' || !is_string($host) || $host === '' ||
 	exit(1);
 }
 
+/* parse_url is lenient - require a plain DNS hostname (matches the webGUI's
+ * is_hostname check) so odd characters can never reach the Unbound block */
+if (!preg_match('/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/', $host)) {
+	fwrite(STDERR, "Invalid hostname: {$host}\n");
+	exit(1);
+}
+
 // Keep a timestamped backup, same layout the webGUI uses
 if (file_exists($conf_file)) {
 	$ts = date('Ymd-His');

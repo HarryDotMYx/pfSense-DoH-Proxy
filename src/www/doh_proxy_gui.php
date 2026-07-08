@@ -1,6 +1,6 @@
 <?php
 /*
- * doh_proxy_gui.php (v1.3.3)
+ * doh_proxy_gui.php (v1.3.4)
  *
  * Web GUI for encrypted DNS upstreams on pfSense:
  *   - DoH mode: Unbound -> local proxy (/root/doh-proxy) -> https://.../dns-query
@@ -56,7 +56,12 @@ function dohp_write_config($new) {
 
 function dohp_running() {
 	if (file_exists(DOHP_PIDFILE) && isvalidpid(DOHP_PIDFILE)) {
-		return (int) trim(file_get_contents(DOHP_PIDFILE));
+		$pid = (int) trim(file_get_contents(DOHP_PIDFILE));
+		/* make sure the PID was not reused by an unrelated process */
+		$cmd = (string) shell_exec('/bin/ps -p ' . escapeshellarg((string) $pid) . ' -o command= 2>/dev/null');
+		if (strpos($cmd, 'doh_proxy.php') !== false) {
+			return $pid;
+		}
 	}
 	return false;
 }
@@ -128,7 +133,10 @@ function dohp_unbound_apply($mode, $conf, &$msg) {
 	$block = dohp_unbound_block($mode, $conf);
 
 	if (strpos($txt, '# BEGIN DOH-PROXY') !== false) {
-		$new = preg_replace('/# BEGIN DOH-PROXY.*?# END DOH-PROXY/s', $block, $txt, 1);
+		/* callback form so "$1"/"\1" in config values are never treated
+		 * as replacement backreferences */
+		$new = preg_replace_callback('/# BEGIN DOH-PROXY.*?# END DOH-PROXY/s',
+		    function ($m) use ($block) { return $block; }, $txt, 1);
 	} elseif (strpos($txt, 'forward-zone') !== false) {
 		$msg = gettext('Unbound custom options already contain a forward-zone that is not managed by this page - Unbound was left untouched. Remove your manual block if you want this page to manage it.');
 		return false;
@@ -245,7 +253,7 @@ if ($_POST) {
 						continue;
 					}
 					if (!is_ipaddr($ip)) {
-						$input_errors[] = sprintf(gettext('"%s" is not a valid IP address.'), $ip);
+						$input_errors[] = sprintf(gettext('"%s" is not a valid IP address.'), htmlspecialchars($ip));
 					} else {
 						$dot_ips[] = $ip;
 					}
